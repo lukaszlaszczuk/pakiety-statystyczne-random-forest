@@ -8,6 +8,8 @@
 \usepackage{amsmath}
 \usepackage{amsfonts}
 \usepackage{environ}
+\usepackage{array}
+\usepackage{multirow}
 
 
 \usetheme{pwrlite}
@@ -22,6 +24,14 @@
 \newcommand{\customframefont}[1]{
 \setbeamertemplate{itemize/enumerate body begin}{#1}
 \setbeamertemplate{itemize/enumerate subbody begin}{#1}
+}
+
+\newcommand\MyBox[2]{
+  \fbox{\lower0.75cm
+    \vbox to 1.7cm{\vfil
+      \hbox to 1.7cm{\hfil\parbox{1.4cm}{#1\\#2}\hfil}
+      \vfil}%
+  }%
 }
 
 \NewEnviron{framefont}[1]{
@@ -41,6 +51,7 @@
 \begin{document}
 <<setup, include=FALSE, cache=FALSE>>=
 library(knitr)
+library(kableExtra)
 library(dplyr)
 library(ggplot2)
 library(readr)
@@ -54,7 +65,9 @@ library(ranger)
 library(mlr)
 library(rpart)
 library(rpart.plot)
+library(h2o)
 
+set.seed(41)
 # set global chunk options
 opts_chunk$set(fig.path='figure/minimal-', fig.align='center', fig.show='hold', fig.width=3)
 options(formatR.arrow=TRUE,width=90)
@@ -89,12 +102,33 @@ df_change_types <- function(df, target) {
   df
 }
 
+create_fi_df <- function(tree_model) {
+  s <- summary(tree_model)
+  importances_df <- as.data.frame(s$variable.importance)
+  importances_df$names <- rownames(importances_df)
+  colnames(importances_df) <- c("importances", "names")
+  importances_df
+}
+
+set_threshold <- function(y_proba, y_test) {
+  vec <- c()
+  for (threshold in seq(0.01,1,0.01)) {
+    y_pred <- factor(as.numeric((y_proba > threshold)[,2]))
+    r1 <- model_evaluate(y_test, y_pred)
+    f1 <- r1$byClass["F1"]
+    vec <- append(vec, f1)
+  }
+  results <- data.frame(seq(0.01, 1, 0.01), vec)
+  threshold <- results[which.max(results$vec), 1]
+  threshold
+}
+
 model_evaluate <- function(y_true, y_pred) {
   c_mat <- confusionMatrix(y_pred, y_true, positive="1", mode = "prec_recall")
   c_mat
 }
 
-df <- read_csv("bank.csv")
+df <- read_csv("data/bank.csv")
 df <- df_change_types(df, "y")
 df_splits <- test_train_split(df, 'y', 0.75)
 df_train <- df_splits[[1]]
@@ -133,7 +167,7 @@ y_test <- df_splits[[3]]
     \frametitle{Drzewa decyzyjne}
       	\begin{figure}[h]
 			    \centering
-			    \includegraphics[width=10cm]{drzewko.png}
+			    \includegraphics[width=10cm]{images/drzewko.png}
 		    \end{figure}
 		    \url{https://www.xoriant.com/blog/product-engineering/decision-trees-machine-learning-algorithm.html}
   \end{frame}
@@ -143,7 +177,7 @@ y_test <- df_splits[[3]]
     Intuicja: miara "chaosu" naszego zbioru. \newline
     Entropia Shannona: $S = - \displaystyle \sum_{i=1}^{N}p_i \log_2 p_i$ \newline
       	\begin{figure}[h]
-			    \includegraphics[width=10cm]{entropia.png}
+			    \includegraphics[width=10cm]{images/entropia.png}
 		    \end{figure}
 		    $S = -\frac{9}{20}\log_2\frac{9}{20}-\frac{11}{20}\log_2\frac{11}{20} \approx 1$ \newline \newline
 		    \url{https://mlcourse.ai/articles/topic3-dt-knn/}
@@ -155,7 +189,7 @@ y_test <- df_splits[[3]]
     Intuicja: miara zmniejszenia "chaosu" po dokonaniu podziału danych (stworzenia rozgałęzienia). Chcemy ją maksymalizować przy kolejnych podziałach. \newline
     Przyrost informacji (Information Gain): $IG = S_0 - \displaystyle \sum_{i=1}^{q} \frac{N_i}{N} S_i$
       	\begin{figure}[h]
-			    \includegraphics[width=8cm]{information+gain.png}
+			    \includegraphics[width=8cm]{images/information+gain.png}
 		    \end{figure}
 		$$IG = S_0 - \frac{13}{20}S_1 - \frac{7}{20}S_2 \approx 0,16 $$\newline
 		    \url{https://mlcourse.ai/articles/topic3-dt-knn/}
@@ -180,7 +214,7 @@ y_test <- df_splits[[3]]
     \frametitle{Cały algorytm - wizualizacja}
       	\begin{figure}[h]
 			    \centering
-			    \includegraphics[width=7.75cm]{drzewko_cale.png}
+			    \includegraphics[width=7.75cm]{images/drzewko_cale.png}
 		    \end{figure}
   \end{frame}  
 
@@ -290,10 +324,7 @@ rpart.plot(tree, box.palette = "RdBu",
   \frametitle{Pierwszy model - drzewo decyzyjne}
   ~\newline
 << echo=FALSE, include=FALSE>>=
-s <- summary(tree)
-importances_df <- as.data.frame(s$variable.importance)
-importances_df$names <- rownames(importances_df)
-colnames(importances_df) <- c("importances", "names")
+importances_df <- create_fi_df(tree)
 @
 
 << echo=FALSE, fig.height=3, fig.width=5>>=
@@ -308,14 +339,33 @@ ggplot(importances_df, mapping = aes(x = names, y = importances, fill = importan
 \end{frame}
 
 \begin{frame}[fragile]
-  \frametitle{Pierwszy model - drzewo decyzyjne}
+  \frametitle{Przeuczone drzewo :D}
   ~\newline
 << echo=FALSE, warning = FALSE, fig.height=3, fig.width=5>>=
-tree <- rpart(y ~ ., data = df_train, cp=0)
-rpart.plot(tree, box.palette = "RdBu",
-           shadow.col = "gray", nn = TRUE, tweak = 1.8)
+tree_1 <- rpart(y ~ ., data = df_train, cp=0, minsplit= 1)
+rpart.plot(tree_1, box.palette = "RdBu",
+           shadow.col = "gray", nn = TRUE, tweak = 2)
 @
 \end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{Pierwszy model - drzewo decyzyjne}
+  ~\newline
+<< echo=FALSE, include=FALSE>>=
+importances_df <- create_fi_df(tree_1)
+@
+
+<< echo=FALSE, fig.height=3, fig.width=5>>=
+ggplot(importances_df, mapping = aes(x = names, y = importances, fill = importances)) +
+  geom_col() +
+  theme_my +
+  theme(legend.title = element_text(size = 6),
+        axis.text.x = element_text(angle = 30)) +
+  labs(title = "Feature importances",
+       x="")
+@
+\end{frame}
+
 
 \begin{frame}[fragile]
   \frametitle{EDA}
@@ -342,9 +392,8 @@ ggplot(df, aes(x = duration, col = y, fill = y)) +
 @
 \end{frame}
 
-
 \begin{frame}[fragile]
-  \frametitle{EDA}
+  \frametitle{Czemu mosaic plot?}
   ~\newline\newline
 << echo=FALSE, fig.height=3, fig.width=4>>=
 df_1 <- df
@@ -363,7 +412,7 @@ df_1 %>%
 \end{frame}
 
 \begin{frame}[fragile]
-  \frametitle{EDA}
+  \frametitle{Czemu mosaic plot?}
   ~\newline\newline
 << echo=FALSE, fig.height=3, fig.width=5>>=
 ggplot(data = df_1) +
@@ -372,20 +421,6 @@ ggplot(data = df_1) +
   theme(legend.position = "none") + 
   labs(x = "age",
        title = "Mosaic plot: y vs age")
-@
-\end{frame}
-
-\begin{frame}[fragile]
-  \frametitle{EDA}
-  ~\newline\newline
-<< echo=FALSE, fig.height=3, fig.width=5>>=
-ggplot(data = df) +
-  geom_mosaic(aes(x=product(y, education), fill=education)) +
-  facet_wrap(.~marital) +
-  theme_my +
-  theme(axis.ticks.x = element_blank(),
-        axis.text.x = element_blank()) +
-  labs(x = "education")
 @
 \end{frame}
 
@@ -403,6 +438,70 @@ ggplot(data = df) +
 \end{frame}
 
 
+\begin{frame}[fragile]
+  \frametitle{EDA}
+  ~\newline
+<< echo=FALSE, fig.height=3.5, fig.width=5>>=
+df$month <- factor(df$month, tolower(month.abb))
+ggplot(data = df) +
+  geom_mosaic(aes(x = product(y, month), fill = month)) +
+  theme_my +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 30)) +
+  labs(x = "",
+       title = "Subskrybcja vs month")
+@
+\end{frame}
+
+
+\begin{frame}[fragile]
+  \frametitle{EDA}
+  ~\newline
+<< echo=FALSE, fig.height=3.5, fig.width=5>>=
+ggplot(data = df) +
+  geom_mosaic(aes(x = product(poutcome, month), fill = month)) +
+  theme_my +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 30)) +
+  labs(x = "",
+       title = "poutcome vs month")
+@
+\end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{EDA}
+  ~\newline
+<< echo=FALSE, fig.height=3.5, fig.width=5>>=
+sub_count <- df %>% group_by(month, y) %>% count()
+ggplot(sub_count, aes(x=month, y=n, color=y, group=y)) +
+  geom_line() +
+  geom_point(col = "black") +
+  theme_my +
+  scale_x_discrete(limits=tolower(month.abb)) +
+  scale_y_continuous(breaks = seq(0, 1400, 200)) +
+  theme(legend.position = "none") +
+  labs(title = "n subskrybcji vs month",
+       x = "")
+  
+@
+\end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{EDA}
+  ~\newline\newline
+<< echo=FALSE, fig.height=3, fig.width=5>>=
+ggplot(data = df) +
+  geom_mosaic(aes(x=product(y, education), fill=education)) +
+  facet_wrap(.~marital) +
+  theme_my +
+  theme(axis.ticks.x = element_blank(),
+        axis.text.x = element_blank()) +
+  labs(x = "education")
+@
+\end{frame}
+
+
+
 \begin{frame}
   \frametitle{Metryki do ewaluacji modeli}
   \begin{itemize}
@@ -412,6 +511,193 @@ ggplot(data = df) +
   \end{itemize}~\newline
   $$F_1 = 2 \cdot \frac{precision \cdot recall}{precision + recall}$$
 \end{frame}
+
+\begin{frame}
+  \frametitle{Macierz pomyłek (confusion matrix)}
+  ~\newline\newline
+  \noindent
+\renewcommand\arraystretch{1.2}
+\setlength\tabcolsep{0pt}
+\begin{tabular}{c >{\bfseries}r @{\hspace{0.7em}}c @{\hspace{0.4em}}c @{\hspace{0.7em}}l}
+  \multirow{10}{*}{\parbox{1.1cm}{\bfseries\raggedleft real\\ value}} & 
+    & \multicolumn{2}{c}{\bfseries Prediction outcome} & \\
+  & & \bfseries 0 & \bfseries 1 & \bfseries total \\
+  & 0 & \MyBox{True}{Negative} & \MyBox{False}{Positive} & N$'$ \\[2.4em]
+  & 1 & \MyBox{False}{Negative} & \MyBox{True}{Positive} & P$'$ \\
+  & total & N & P &
+\end{tabular}
+$$precision = \frac{TP}{TP+FP}; \quad recall = \frac{TP}{TP+FN}$$
+$$accuracy = \frac{TP+TN}{TP+TN+FN+FP}$$
+\end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{\small Porównanie drzewa przeuczonego i regularyzowanego}
+  $$\text{MIARA } F_1$$ \newline\newline
+<< echo=FALSE, warning=FALSE, fig.height=3, fig.width=5>>=
+
+#-------------Drzewo regularyzowane---------#
+tree <- rpart(y ~ ., data = df_train)
+y_proba <- predict(tree, newdata = df_train[,-17])
+y_train <- c(df_train[,17])[[1]]
+threshold <- set_threshold(y_proba, y_train)
+y_pred <- factor(as.numeric((y_proba > threshold)[,2]))
+r <- model_evaluate(y_train, y_pred)
+e_1_tr <- r$byClass["F1"]  # F1 score na zbiorze treningowym
+
+y_proba <- predict(tree, newdata = x_test)
+y_pred <- factor(as.numeric((y_proba > threshold)[,2]))
+r1 <- model_evaluate(y_test, y_pred)
+e_1_te <- r1$byClass["F1"]
+
+#---------Drzewo przeuczone--------------#
+y_proba <- predict(tree_1, newdata = df_train[,-17])
+threshold <- set_threshold(y_proba, y_train)
+y_pred <- factor(as.numeric((y_proba > threshold)[,2]))
+
+r <- model_evaluate(y_train, y_pred)
+e_2_tr <- r$byClass["F1"]  # F1 score na zbiorze treningowym
+
+y_proba <- predict(tree_1, newdata = x_test)
+y_pred <- factor(as.numeric((y_proba > threshold)[,2]))
+r1 <- model_evaluate(y_test, y_pred)
+e_2_te <- r1$byClass["F1"]
+
+df_res <- data.frame(train_score=c(e_1_tr, e_2_tr), test_score=c(e_1_te, e_2_te), row.names = c("drzewo regularyzowane", "drzewo przeuczone"))
+kable(df_res, "latex")
+@
+\end{frame}
+
+\begin{frame}
+  \frametitle{Las losowy - budowa modelu}
+  \begin{itemize}
+    \item Skorzystamy z pakietu ranger;
+    \item Przedstawię wyniki czterech modeli: na surowych danych (bez optymalizacji hiperparametrów), na surowych danych (z optymalizacją hiperparametrów), po przekształceniach danych oraz model h2o automl (jako tło);
+    \item We wszystkich modelach przypisywałem klasom wagi (stosunek 1:9);
+    \item Model h2o próbuje trenować różne modele (zarówno drzewiaste jak i sieci neuronowe); po wytrenowaniu zadanej liczby modeli tworzy model ensemble ze stworzonych modeli; końcowym modelem jest model ensemble lub najlepszy z pojedynczych modeli
+  \end{itemize}
+\end{frame}
+
+
+\begin{frame}[fragile]
+\frametitle{Las losowy - wyniki}
+<< echo=FALSE, warning=FALSE, include=FALSE, fig.height=3, fig.width=5>>=
+  rf <- ranger(y ~ ., df_train, classification = TRUE, class.weights = c(1, 9), probability = TRUE,
+              importance = "permutation")
+  y_proba <- predictions(predict(rf, df_train[,-17]))
+  y_train <- c(df_train[,17])[[1]]
+  threshold <- set_threshold(y_proba, y_train)
+  y_pred <- factor(as.numeric((y_proba > threshold)[,2]))
+  
+  r <- model_evaluate(y_train, y_pred)
+  ranger_1_tr <- r$byClass["F1"]  # F1 score na zbiorze treningowym
+  
+  y_proba <- predictions(predict(rf, x_test))
+  y_pred <- factor(as.numeric((y_proba > threshold)[,2]))
+  r1 <- model_evaluate(y_test, y_pred)
+  ranger_1_te <- r1$byClass["F1"]
+  
+  #---------------pretrained ranger model (with randomized search)------------------#
+  load('models/ranger_model.RData')
+  y_pred <- predict(m, newdata = df_train[,-17])
+  y_proba <- y_pred$data[,1:2]
+  y_pred_bin <- factor(as.numeric((y_proba > 0.5)[,2]))
+  ranger_optimized <- model_evaluate(y_pred_bin, c(df_train[,17])[[1]])
+  ranger_optimized_tr <- ranger_optimized$byClass["F1"]
+
+  y_pred <- predict(m, newdata = x_test)
+  y_proba <- y_pred$data[,1:2]
+  y_pred_bin <- factor(as.numeric((y_proba > 0.5)[,2]))
+
+  resu <- model_evaluate(y_pred_bin, y_test)
+  ranger_optimized_te <- resu$byClass["F1"]
+  
+  #-------------data transformations for new model----#
+  df_1 <- read_csv("data/bank.csv")
+  df_1 <- df_change_types(df_1, 'y')  # some data processing
+  df_1$previous <- cut(df_1$previous, breaks=c(-1,0,1,3,10,max(df_1$previous)), labels = c("no calls", "1 call", "2 or 3 calls","4 to 10 calls",'hot line'))
+  df_1$pdays <- cut(df_1$pdays, breaks=c(-2,0,100,max(df_1$pdays)), labels = c("none", "to_100_days", "above_100_days"))
+  df_1$balance <- log10(df_1$balance + (abs(min(df_1$balance))+1))
+  df_1$duration <- as.vector(scale(df_1$duration))
+  df_1$age <- as.vector(scale(df_1$age))
+  df_1_splits <- test_train_split(df_1, 'y', 0.75)
+  df_1_train_1 <- df_1_splits[[1]]
+  x_test_1 <- df_1_splits[[2]]
+  y_test_1 <- df_1_splits[[3]]
+  
+  rf <- ranger(y ~ ., df_1_train_1, classification = TRUE, class.weights = c(1, 9), probability = TRUE,
+              importance = "permutation")
+  y_proba <- predictions(predict(rf, df_1_train_1[,-17]))
+  y_train <- c(df_1_train_1[,17])[[1]]
+  threshold <- set_threshold(y_proba, y_train)
+  y_pred <- factor(as.numeric((y_proba > threshold)[,2]))
+  
+  r <- model_evaluate(y_train, y_pred)
+  ranger_2_tr <- r$byClass["F1"]  # F1 score na zbiorze treningowym
+  
+  y_proba <- predictions(predict(rf, x_test_1))
+  y_pred <- factor(as.numeric((y_proba > threshold)[,2]))
+  r1 <- model_evaluate(y_test_1, y_pred)
+  ranger_2_te <- r1$byClass["F1"]
+  
+  # #--------load h2o model-----------------#
+  h2o.init()
+  load("models/h2o_leader.RData")
+  df <- as.h2o(df)
+  # df[, 7:57] <- as.factor(df[, 7:57])
+  df$y <- as.factor(df$y)
+  df.split <- h2o.splitFrame(df, ratios=0.75, seed = 41)
+  df.train <- df.split[[1]]
+  df.test <- df.split[[2]]
+  x_train <- df.train[, -17]
+  y_train <- df.train[, 17]
+  y_pred <- h2o.predict(best_model, x_train)[,1]
+  y_pred <- c(as.data.frame(y_pred))[[1]]
+  
+  y_train <- c(as.data.frame(y_train))[[1]]
+  evaluate_aml <- model_evaluate(y_train, y_pred)
+  automl_tr <- evaluate_aml$byClass["F1"]
+
+  test_colidx <- grep('^y$', colnames(df))
+  x_test <- df.test[, -test_colidx]
+  y_test <- df.test[, test_colidx]
+
+  y_test <- c(as.data.frame(y_test))[[1]]
+  y_pred <- h2o.predict(best_model, x_test)[,1]
+  y_pred <- c(as.data.frame(y_pred))[[1]]
+
+  evaluate_aml <- model_evaluate(y_test, y_pred)
+  automl_te <- evaluate_aml$byClass["F1"]
+  
+@
+
+$$\text{MIARA } F_1$$
+<< echo=FALSE, warning=FALSE, fig.height=3, fig.width=5>>=  
+  df_res <- data.frame(train_score=c(ranger_1_tr, ranger_optimized_tr, ranger_2_tr, automl_tr), test_score=c(ranger_1_te, ranger_optimized_te, ranger_2_te, automl_te), row.names = c("ranger podstawowy", "ranger po optymalizacji", "ranger po transformacji", "h2o automl model"))
+kable(df_res, "latex")
+@
+\end{frame}
+
+\begin{frame}
+\frametitle{Siatka parametrów modelu ranger}
+\begin{itemize}
+  \item mtry: $\{1, 3, 5, 7 \}$
+  \item min.node.size: $\{1, 4, ..., 19\}$
+  \item num.trees: $\{100, 200, 500, 1000\}$
+  \item wytrenowano losowo 20 modeli;
+  \item najlepsze parametry: mtry -- 3, min.node.size -- 1, num.trees -- 500.
+\end{itemize}
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Podsumowanie}
+\begin{itemize}
+  \item Transformacje danych nie poprawiały wyników;
+  \item One Hot Encoding pogarszał wyniki;
+  \item Wszystkie kody można znaleźć na: \url{https://github.com/lukaszlaszczuk/pakiety-statystyczne-random-forest}
+\end{itemize}
+\end{frame}
+
 
 
 \end{document}
