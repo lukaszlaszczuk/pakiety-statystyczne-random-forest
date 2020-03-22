@@ -1,0 +1,417 @@
+\documentclass{beamer}
+%\documentclass[aspectratio=169]{beamer}  % inna proporcja slajdu
+
+\usepackage[utf8]{inputenc}
+\usepackage{polski}
+\usepackage{caption}
+\usepackage{outlines}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{environ}
+
+
+\usetheme{pwrlite}
+%\usetheme[nosections]{pwrlite}  % wyłączenie stron z sekcjami
+%\usetheme[en]{pwrlite}  % logo w wersji angielskiej
+%\usetheme[nosections,en]{pwrlite}  % logo w wersji angielskiej i bez sekcji
+%\captionsetup{font=scriptsize}
+%\setbeamerfont{caption}{size=\footnotesize}
+\DeclareCaptionLabelSeparator{mysep}{~~}
+\captionsetup{labelsep=mysep, font=scriptsize}
+
+\newcommand{\customframefont}[1]{
+\setbeamertemplate{itemize/enumerate body begin}{#1}
+\setbeamertemplate{itemize/enumerate subbody begin}{#1}
+}
+
+\NewEnviron{framefont}[1]{
+\customframefont{#1} % for itemize/enumerate
+{#1 % For the text outside itemize/enumerate
+\BODY
+}
+\customframefont{\normalsize}
+}
+
+%\pdfmapfile{+lato.map}  % jeśli nie działa font Lato (a jest zainstalowany), odkomentuj przy pierwszej kompilacji
+\title{\huge Pakiety statystyczne -- las losowy}
+\institute{Wydział Matematyki\ Politechniki Wrocławskiej}
+\author{\small Łukasz Łaszczuk}
+
+
+\begin{document}
+<<setup, include=FALSE, cache=FALSE>>=
+library(knitr)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(ggmosaic)
+library(rockchalk)
+library(extdplyr)
+library(caret)
+library(randomForest)
+library(MLmetrics)
+library(ranger)
+library(mlr)
+library(rpart)
+library(rpart.plot)
+
+# set global chunk options
+opts_chunk$set(fig.path='figure/minimal-', fig.align='center', fig.show='hold', fig.width=3)
+options(formatR.arrow=TRUE,width=90)
+
+test_train_split <- function(df, target_var, proportion) {
+  train.index <- createDataPartition(c(df[, target_var])[[1]], p = proportion, list = FALSE)
+  # Podział stratified test-train split
+  df_train <- df[train.index, ]
+  x_train <- df_train %>% select(-target_var)
+  y_train <- df_train %>% select(target_var)
+  df_test <- df[-train.index, ]
+  x_test <- df_test %>% select(-target_var)
+  y_test <- df_test %>% select(target_var)
+  y_test <- c(y_test)[[1]]
+  list(df_train, x_test, y_test)
+}
+
+theme_my <- theme(
+                  legend.key.size = unit(0.15,"in"),
+                  legend.text = element_text(size=6),
+                  plot.title = element_text(hjust=0.5, size=12, face="bold"),
+                  axis.text.x = element_text(size=8),
+                  axis.text.y= element_text(size=8),
+                  axis.title = element_text(size=9, face="bold"),
+                  panel.background = element_rect(fill="white"),
+                  panel.grid = element_line(color="grey"))
+
+df_change_types <- function(df, target) {
+  char_cols <- sapply(df, class) == "character"
+  df[, char_cols] <- as.data.frame(lapply(df[, char_cols], as.factor))
+  df[, target] <- as.factor(c(df[, target])[[1]])
+  df
+}
+
+model_evaluate <- function(y_true, y_pred) {
+  c_mat <- confusionMatrix(y_pred, y_true, positive="1", mode = "prec_recall")
+  c_mat
+}
+
+df <- read_csv("bank.csv")
+df <- df_change_types(df, "y")
+df_splits <- test_train_split(df, 'y', 0.75)
+df_train <- df_splits[[1]]
+x_test <- df_splits[[2]]
+y_test <- df_splits[[3]]
+@
+	
+
+	
+	\begin{frame}
+		\frametitle{Plan prezentacji}
+		\begin{outline}
+			\1 Opis algorytmu
+			  \2 Co to są drzewa decyzyjne?
+			  \2 Drzewa decyzyjne w problemach klasyfikacyjnych i regresyjnych
+			  \2 W jaki sposób drzewa decyzyjne są wykorzystywane podczas tworzenia lasu losowego
+			\1 Modelowanie za pomocą lasu losowego
+			  \2 Eksploracyjna analiza danych
+			  \2 Omówienie metryk do ewaluacji
+			  \2 Budowa modelu, dobór hiperparametrów
+			  \2 Porównanie z innymi modelami
+		\end{outline}
+	\end{frame}
+
+\begin{frame}
+    \frametitle{Drzewa decyzyjne}
+      	\begin{itemize}
+      	  \item Drzewa decyzyjne same w sobie nie są skutecznym algorytmem, ale stanowią podstawę efektywnych modeli ensemble, np. lasów losowych, czy gradient boostingu;
+      	  \item Intuicja: zbiór pytań (reguł eksperckich) oddzielających od siebie grupy (np. dobrych i złych klientów banku);
+      	  \item Jest algorytmem glass-box (w łatwy sposób możemy zrozumieć jego działanie oraz istotne zmienne - im wcześniej pojawi się w drzewie, tym jest istotniejsza).
+      	\end{itemize}
+  \end{frame}
+
+
+  \begin{frame}
+    \frametitle{Drzewa decyzyjne}
+      	\begin{figure}[h]
+			    \centering
+			    \includegraphics[width=10cm]{drzewko.png}
+		    \end{figure}
+		    \url{https://www.xoriant.com/blog/product-engineering/decision-trees-machine-learning-algorithm.html}
+  \end{frame}
+  
+  \begin{frame}
+    \frametitle{\large Przydatne pojęcia - entropia Shannona}
+    Intuicja: miara "chaosu" naszego zbioru. \newline
+    Entropia Shannona: $S = - \displaystyle \sum_{i=1}^{N}p_i \log_2 p_i$ \newline
+      	\begin{figure}[h]
+			    \includegraphics[width=10cm]{entropia.png}
+		    \end{figure}
+		    $S = -\frac{9}{20}\log_2\frac{9}{20}-\frac{11}{20}\log_2\frac{11}{20} \approx 1$ \newline \newline
+		    \url{https://mlcourse.ai/articles/topic3-dt-knn/}
+  \end{frame}
+  
+  \begin{frame}
+    \frametitle{\large Przydatne pojęcia - przyrost informacji}
+    ~\newline
+    Intuicja: miara zmniejszenia "chaosu" po dokonaniu podziału danych (stworzenia rozgałęzienia). Chcemy ją maksymalizować przy kolejnych podziałach. \newline
+    Przyrost informacji (Information Gain): $IG = S_0 - \displaystyle \sum_{i=1}^{q} \frac{N_i}{N} S_i$
+      	\begin{figure}[h]
+			    \includegraphics[width=8cm]{information+gain.png}
+		    \end{figure}
+		$$IG = S_0 - \frac{13}{20}S_1 - \frac{7}{20}S_2 \approx 0,16 $$\newline
+		    \url{https://mlcourse.ai/articles/topic3-dt-knn/}
+  \end{frame}
+  
+  \begin{framefont}{\small}
+  \begin{frame}
+    \frametitle{Kroki algorytmu}
+    \begin{enumerate}
+      \item Drzewo zaczyna od pojedynczego węzła reprezentującego cały zbiór treningowy;
+      \item Jeżeli wszystkie przykłady należą do jednej klasy decyzyjnej, to zbadany węzeł staje się liściem i jest on etykietowany tą decyzją;
+      \item W przeciwnym przypadku algorytm wykorzystuje miarę entropii (funkcja przyrostu informacji) jako heurystyki do wyboru atrybutu, który najlepiej dzieli zbiór przykładów treningowych;
+      \item Dla każdego wyniku testu tworzy się jedno odgałęzienie i przykłady treningowe są odpowiednio rozdzielone do nowych węzłów (poddrzew);
+      \item Algorytm działa dalej w rekurencyjny sposób dla zbiorów przykładów przydzielonych do poddrzew.;
+      \item Algorytm kończy się, gdy kryterium stopu jest spełnione.
+    \end{enumerate}
+  \end{frame}
+  \end{framefont}
+
+  \begin{frame}
+  ~\newline
+    \frametitle{Cały algorytm - wizualizacja}
+      	\begin{figure}[h]
+			    \centering
+			    \includegraphics[width=7.75cm]{drzewko_cale.png}
+		    \end{figure}
+  \end{frame}  
+
+
+ \begin{frame}
+     \frametitle{Drzewa decyzyjne - regresja}
+      	W problemie regresji sposób tworzenia drzew pozostaje taki sam, zmienia się jednak kryterium podziału (na wariancję):
+      	$$D = \cfrac{1}{n}\displaystyle\sum_{i=1}^{n}\left(y_i - \frac{1}{n}\displaystyle\sum_{j=1}^{n}y_j\right)^2$$
+        Końcową predykcją jest średnia zmiennej objaśnianej w danym liściu.
+  \end{frame}  
+  
+\begin{frame}
+  \frametitle{\small Problemy związane z drzewami decyzyjnymi}
+  \begin{itemize}
+    \item Drzewa decyzyjne w łatwy sposób jest przeuczyć (nie potrafią generalizować swoich predykcji na zbiorze testowym) - duża wariancja;
+    \item Można częściowo temu zapobiec poprzez wcześniejsze zatrzymanie algorytmu (ustawienie maksymalnej głębokości lub minimalnej ilości obserwacji, która musi znaleźć się w liściu)
+  \end{itemize}
+\end{frame} 
+
+\begin{frame}
+  \frametitle{Twierdzenie Condorceta}
+  \begin{itemize}
+    \item Cel: podjęcie decyzji (tak lub nie);
+    \item Głosuje $N$ jurorów, końcowa decyzja zapada większością głosów;
+    \item Jurorzy głosują niezależnie od siebie, każdy z nich podejmuje właściwą decyzję z prawdopodobieństwem $p$;
+    \item Prawdopodobieństwo podjęcia właściwej decyzji końcowej: $ \mu = \displaystyle \sum_{i=\frac{N}{2}+1}^{N}{N \choose i}p^i(1-p)^{N-i}$
+    \item Jeśli $p>0,5$, to przy $N \rightarrow \infty, \mu \rightarrow 1$
+  \end{itemize}
+\end{frame}
+
+\begin{frame}
+  \frametitle{Las losowy}
+  Intuicja: Zbudowanie wielu "słabych" modeli (drzew), które po połączeniu (w przypadku lasu losowego po wyciągnięciu średniej) dadzą lepszy wynik niż pojedynczy model. \newline \newline
+  Problem: Sprawienie, aby decyzje kolejnych drzew były niezależne oraz jak najdokładniejszse;
+\end{frame}
+
+\begin{frame}
+  \frametitle{Lasy losowe - algorytm}
+  \begin{itemize}
+    \item Z próby o wielkości $N$ (nasze dane) losujemy jednostajnie ze zwracaniem $N$ elementów, tworząc nową próbę (bootstrapping);
+    \item Ze zbioru stworzoną metodą bootstrap, wybieramy losowo $m$ spośród $p$ zmiennych (kolumn; przyjmuje się domyślną wartość $m$ jako $\lfloor \sqrt{p} \rfloor$ (klasyfikacja) lub $\lfloor \frac{p}{3} \rfloor$ (regresja));
+    \item Na próbie tej budujemy nasz podstawowy model (drzewo decyzyjne - model, który jest przetrenowany);
+    \item Powtarzamy poprzednie kroki $B$ razy;
+    \item Tworzymy końcowy model metodą głosowania większościowego (majority voting - klasyfikacja), bądź wyciągamy średnią (regresja) - dostajemy model lepszy niż drzewo decyzyjne (bagging).
+  \end{itemize}
+\end{frame}
+
+\begin{frame}
+  \frametitle{Obserwacje OOB (out of bag)}
+  \begin{itemize}
+    \item Obserwacje OOB -- obserwacje, które nie znalazły się w zbiorze, na którym budowaliśmy drzewo decyzyjne;
+    \item Prawdopdobieństwo zdarzenia, że losowo wybrana obserwacja z próby o wielkości $l$ nie znajdzie się w zbiorze bootstrap: $(1-\frac{1}{l})^l$;
+    \item Gdy $l \rightarrow \infty$, prawdopodobieństwo to wynosi $\frac{1}{e} \approx 37\%$;
+    \item Obserwacje OOB stanowią reprezentatywną próbę zbioru, możemy na nich testować nasz model (alternatywa do walidacji krzyżowej, ang. cross-validation).
+  \end{itemize}
+\end{frame}
+
+\begin{frame}
+  \frametitle{Zalety lasów losowych}
+  \begin{itemize}
+    \item Jest skuteczniejszy od algorytmów liniowych oraz drzew decyzyjnych;
+    \item Odporny na wartości odstające (dzięki baggingowi) oraz na wartości None;
+    \item Działa skutecznie bez optymalizacji hiperparametrów (dzięki temu mamy dobry punkt odnosienia przy budowaniu innych modeli, np. xgboosta);
+    \item Obserwacjom z różnych klas możemy przypisywać wagi (szczególnie przydatne przy niezbalansowanych zbiorach danych);
+    \item Jest algorytmem, który się nie przeucza.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}
+  \frametitle{Wady lasów losowych}
+  \begin{itemize}
+    \item Trudniejszy w interpretacji niż drzewo decyzyjne (istnieją jednak metody wyjaśniania);
+    \item Nie radzi sobie z danymi, które są rzadkie (np. zastosowanie one hot encodingu zmiennych kategorycznych może pogorszyć rezultaty) oraz które mają bardzo dużą ilość zmiennych;
+    \item W przeciwieństwie do modeli liniowych ekstrapolacja nie jest możliwa;
+    \item Modele lasów losowych potrzebują więcej pamięci niż modele xgboost (ponieważ trenują głębsze drzewa decyzyjne).
+  \end{itemize}
+\end{frame}
+
+
+% 
+% \begin{frame}
+%   \frametitle{Obciążenie vs. wariancja modeli predykcyjnych}
+%   \item Obciążenie - błąd nieprawidłowych założeń algorytmu uczącego się ()
+%   
+% \end{frame}
+
+\begin{frame}
+  \frametitle{Przedstawienie danych}
+  \begin{itemize}
+    \item Bank Marketing Data Set;
+    \item 17 kolumn (9 kategorycznych, 7 numerycznych oraz binarna zmienna objaśniana)     \item 4521 obserwacji;
+    \item Zmienna objaśniana (y) zawiera informację, czy klient skorzystał z oferty banku (lokaty terminowej).
+  \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{Pierwszy model - drzewo decyzyjne}
+  ~\newline
+<< echo=TRUE, fig.height=3, fig.width=5>>=
+tree <- rpart(y ~ ., data = df_train, cp = 0.02)
+rpart.plot(tree, box.palette = "RdBu",
+           shadow.col = "gray", nn = TRUE)
+@
+\end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{Pierwszy model - drzewo decyzyjne}
+  ~\newline
+<< echo=FALSE, include=FALSE>>=
+s <- summary(tree)
+importances_df <- as.data.frame(s$variable.importance)
+importances_df$names <- rownames(importances_df)
+colnames(importances_df) <- c("importances", "names")
+@
+
+<< echo=FALSE, fig.height=3, fig.width=5>>=
+ggplot(importances_df, mapping = aes(x = names, y = importances, fill = importances)) +
+  geom_col() +
+  theme_my +
+  theme(legend.title = element_text(size = 6),
+        axis.text.x = element_text(angle = 30)) +
+  labs(title = "Feature importances",
+       x="")
+@
+\end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{Pierwszy model - drzewo decyzyjne}
+  ~\newline
+<< echo=FALSE, warning = FALSE, fig.height=3, fig.width=5>>=
+tree <- rpart(y ~ ., data = df_train, cp=0)
+rpart.plot(tree, box.palette = "RdBu",
+           shadow.col = "gray", nn = TRUE, tweak = 1.8)
+@
+\end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{EDA}
+  ~\newline\newline
+<< echo=FALSE, fig.height=3, fig.width=4>>=
+ggplot(df, mapping = aes(x = y, fill = y)) +
+  geom_bar(aes(y = (..count..)/sum(..count..))) +
+  theme_my +
+  theme(legend.position = "none") +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
+  labs(title = "Proporcja zmiennej y",
+       y = "")
+@
+\end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{EDA}
+  ~\newline\newline
+<< echo=FALSE, fig.height=3, fig.width=4>>=
+ggplot(df, aes(x = duration, col = y, fill = y)) +
+  geom_density(alpha = 0.1) +
+  theme_my +
+  labs(y = "")
+@
+\end{frame}
+
+
+\begin{frame}[fragile]
+  \frametitle{EDA}
+  ~\newline\newline
+<< echo=FALSE, fig.height=3, fig.width=4>>=
+df_1 <- df
+df_1$age <- cut(df_1$age, breaks = c(-1, 29 , 39, 49, 59, 100), labels = c("<30", "30-40", "40-50","50-60",'>60'))
+
+df_1 %>%
+  pct_routine(age, y) %>% 
+    ggplot(aes(x = age, y = pct, fill = y)) +
+      geom_col() +
+      scale_y_continuous(limits = c(0,1), breaks = seq(0,1,0.2)) +
+      theme_my +
+      labs(title = "Proporcja subskrybcji vs wiek",
+           x = "",
+           y = "")
+@
+\end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{EDA}
+  ~\newline\newline
+<< echo=FALSE, fig.height=3, fig.width=5>>=
+ggplot(data = df_1) +
+  geom_mosaic(aes(x=product(y, age), fill=age)) +
+  theme_my + 
+  theme(legend.position = "none") + 
+  labs(x = "age",
+       title = "Mosaic plot: y vs age")
+@
+\end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{EDA}
+  ~\newline\newline
+<< echo=FALSE, fig.height=3, fig.width=5>>=
+ggplot(data = df) +
+  geom_mosaic(aes(x=product(y, education), fill=education)) +
+  facet_wrap(.~marital) +
+  theme_my +
+  theme(axis.ticks.x = element_blank(),
+        axis.text.x = element_blank()) +
+  labs(x = "education")
+@
+\end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{EDA}
+  ~\newline\newline
+<< echo=FALSE, fig.height=3, fig.width=5>>=
+ggplot(data = df) +
+  geom_mosaic(aes(x=product(y, poutcome), fill=poutcome)) +
+  theme_my +
+  theme(axis.ticks.x = element_blank(),
+        axis.text.x = element_blank()) +
+  labs(x = "poutcome")
+@
+\end{frame}
+
+
+\begin{frame}
+  \frametitle{Metryki do ewaluacji modeli}
+  \begin{itemize}
+    \item Niezbalansowany zbiór danych (około 10\% to obserwacje pozytywne);
+    \item Dokładność (accuracy) nie jest odpowiednią metryką - przewidując same 0 osiągniemy 90\% dokładności;
+    \item Nasza metryka: miara F1 (F1 score)
+  \end{itemize}~\newline
+  $$F_1 = 2 \cdot \frac{precision \cdot recall}{precision + recall}$$
+\end{frame}
+
+
+\end{document}
