@@ -158,7 +158,7 @@ y_test <- df_splits[[3]]
       	\begin{itemize}
       	  \item Drzewa decyzyjne same w sobie nie są skutecznym algorytmem, ale stanowią podstawę efektywnych modeli ensemble, np. lasów losowych, czy gradient boostingu;
       	  \item Intuicja: zbiór pytań (reguł eksperckich) oddzielających od siebie grupy (np. dobrych i złych klientów banku);
-      	  \item Jest algorytmem glass-box (w łatwy sposób możemy zrozumieć jego działanie oraz istotne zmienne - im wcześniej pojawi się w drzewie, tym jest istotniejsza).
+      	  \item Jest algorytmem glass-box (w łatwy sposób możemy zrozumieć jego działanie oraz ważne zmienne - im wcześniej pojawi się w drzewie, tym więcej obserwacji rozdzieli).
       	\end{itemize}
   \end{frame}
 
@@ -167,9 +167,9 @@ y_test <- df_splits[[3]]
     \frametitle{Drzewa decyzyjne}
       	\begin{figure}[h]
 			    \centering
-			    \includegraphics[width=10cm]{images/drzewko.png}
+			    \includegraphics[width=10cm]{images/dec-tree.PNG}
 		    \end{figure}
-		    \url{https://www.xoriant.com/blog/product-engineering/decision-trees-machine-learning-algorithm.html}
+		    \url{https://www.aitimejournal.com/@akshay.chavan/a-comprehensive-guide-to-decision-tree-learning}
   \end{frame}
   
   \begin{frame}
@@ -248,7 +248,7 @@ y_test <- df_splits[[3]]
 \begin{frame}
   \frametitle{Las losowy}
   Intuicja: Zbudowanie wielu "słabych" modeli (drzew), które po połączeniu (w przypadku lasu losowego po wyciągnięciu średniej) dadzą lepszy wynik niż pojedynczy model. \newline \newline
-  Problem: Sprawienie, aby decyzje kolejnych drzew były niezależne oraz jak najdokładniejszse;
+  Problem: Sprawienie, aby decyzje kolejnych drzew były niezależne oraz jak najdokładniejsze;
 \end{frame}
 
 \begin{frame}
@@ -641,7 +641,7 @@ kable(df_res, "latex")
   
   # #--------load h2o model-----------------#
   h2o.init()
-  load("models/h2o_leader.RData")
+  best_model <- h2o.loadModel("models/StackedEnsemble_BestOfFamily_AutoML_20200324_161734")
   df <- as.h2o(df)
   # df[, 7:57] <- as.factor(df[, 7:57])
   df$y <- as.factor(df$y)

@@ -216,7 +216,8 @@ aml <- h2o.automl(y = "y",
                   verbosity = "info")
 best_model <- aml@leader
 
-save(best_model, file="h2o_leader.RData")
+h2o.saveModel(best_model, path=file.path(getwd(), "model"))
+
 
 test_colidx <- grep('^y$', colnames(df))
 x_test <- df.test[, -test_colidx]

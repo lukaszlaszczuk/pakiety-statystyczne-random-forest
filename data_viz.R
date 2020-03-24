@@ -3,7 +3,7 @@ library(ggplot2)
 library(readr)
 library(ggmosaic)
 library(extdplyr)
-
+library(h2o)
 df <- read_csv("data/bank.csv")
 sum(is.na(df))  # no NULLs in data.frame
 
